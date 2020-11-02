@@ -1,7 +1,7 @@
 use std::future::Future;
 use std::{cell::RefCell, collections::HashMap, pin::Pin, rc::Rc, task::Context, task::Poll};
 
-use futures::future;
+use futures::future::{self, Ready};
 use ntex::Service;
 use pin_project::pin_project;
 
@@ -23,7 +23,7 @@ impl QuotaManager {
         }
     }
 
-    pub fn enforce_message_quota(&self, hub: Hub) -> impl Future<Output = Result<(), Error>> {
+    pub fn enforce_message_quota(&self, hub: Hub) -> Ready<Result<(), Error>> {
         if let Some(max_count) = self.state.borrow().count_quota.get(&hub.id()) {
             if hub.message_count() < *max_count {
                 future::ok(())
@@ -77,7 +77,7 @@ where
     type Request = S::Request;
     type Response = S::Response;
     type Error = S::Error;
-    type Future = QuotaServiceResponse<S>;
+    type Future = QuotaServiceResponse<S, Ready<Result<(), Self::Error>>>;
 
     fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.state.borrow().service.poll_ready(cx)
@@ -88,31 +88,29 @@ where
         let hub = self.state.borrow().hub.clone();
         let fut = self.state.borrow().quota_manager.enforce_message_quota(hub);
 
-        QuotaServiceResponse::QuotaCheck(Box::pin(fut), self.state.clone())
+        QuotaServiceResponse::QuotaCheck(fut, self.state.clone())
     }
 }
 
 #[pin_project(project = QuotaServiceResponseProj)]
-pub enum QuotaServiceResponse<S>
+pub enum QuotaServiceResponse<S, F>
 where
     S: Service,
 {
-    QuotaCheck(
-        Pin<Box<dyn Future<Output = Result<(), Error>>>>,
-        Rc<RefCell<QuotaServiceState<S>>>,
-    ),
+    QuotaCheck(#[pin] F, Rc<RefCell<QuotaServiceState<S>>>),
     ServiceCall(#[pin] S::Future),
 }
 
-impl<S> Future for QuotaServiceResponse<S>
+impl<S, F> Future for QuotaServiceResponse<S, F>
 where
     S: Service<Error = Error>,
+    F: Future<Output = Result<(), Error>>,
 {
     type Output = <S::Future as Future>::Output;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.as_mut().project() {
-            QuotaServiceResponseProj::QuotaCheck(fut, state) => match Pin::new(fut).poll(cx) {
+            QuotaServiceResponseProj::QuotaCheck(fut, state) => match fut.poll(cx) {
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
                 Poll::Ready(Ok(_)) => {
