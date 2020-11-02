@@ -1,0 +1,13 @@
+[package]
+name = "quota-manager-sample"
+version = "0.1.0"
+authors = ["Rajasekharan Vengalil <rajave@microsoft.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+futures = "0.3"
+ntex = "0.1"
+ntex-service = "0.1"
+pin-project = "1.0"
